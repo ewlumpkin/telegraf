@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"path"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +18,7 @@ import (
 	internaltls "github.com/influxdata/telegraf/internal/tls"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/plugins/inputs"
+	jsonparser "github.com/influxdata/telegraf/plugins/parsers/json"
 	"github.com/openconfig/gnmi/proto/gnmi"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -29,8 +30,6 @@ type CiscoTelemetryGNMI struct {
 	Addresses     []string          `toml:"addresses"`
 	Subscriptions []Subscription    `toml:"subscription"`
 	Aliases       map[string]string `toml:"aliases"`
-	TagKeys       []string          `toml:"tag_keys"`
-	KeepNonMetric bool              `toml:"keep_non_metric"`
 
 	// Optional subscription configuration
 	Encoding    string
@@ -55,8 +54,6 @@ type CiscoTelemetryGNMI struct {
 	acc     telegraf.Accumulator
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
-	// Keys for values that may be treated as tags
-	tagKeys map[string]bool
 
 	Log telegraf.Logger
 }
@@ -74,14 +71,6 @@ type Subscription struct {
 	// Duplicate suppression
 	SuppressRedundant bool              `toml:"suppress_redundant"`
 	HeartbeatInterval internal.Duration `toml:"heartbeat_interval"`
-}
-
-type TelemetryMetric struct {
-	Timestamp time.Time
-	Name      string
-	Value     interface{}
-	Tags      map[string]string
-	Nested    []TelemetryMetric
 }
 
 // Start the http listener service
@@ -139,9 +128,6 @@ func (c *CiscoTelemetryGNMI) Start(acc telegraf.Accumulator) error {
 	}
 	for alias, path := range c.Aliases {
 		c.aliases[path] = alias
-	}
-	for _, tagKey := range c.TagKeys {
-		c.tagKeys[tagKey] = true
 	}
 
 	// Create a goroutine for each device, dial and subscribe
@@ -272,12 +258,11 @@ func (c *CiscoTelemetryGNMI) handleSubscribeResponse(address string, reply *gnmi
 	var name, lastAliasPath string
 	for _, update := range response.Update.Update {
 		// Prepare tags from prefix
-		var telemetryMetric TelemetryMetric
-		telemetryMetric.Tags = make(map[string]string, len(prefixTags))
+		tags := make(map[string]string, len(prefixTags))
 		for key, val := range prefixTags {
-			telemetryMetric.Tags[key] = val
+			tags[key] = val
 		}
-		aliasPath := c.handleTelemetryField(telemetryMetric, update)
+		aliasPath, fields := c.handleTelemetryField(update, tags, prefix)
 
 		// Inherent valid alias from prefix parsing
 		if len(prefixAliasPath) > 0 && len(aliasPath) == 0 {
@@ -313,8 +298,6 @@ func (c *CiscoTelemetryGNMI) handleSubscribeResponse(address string, reply *gnmi
 					continue
 				}
 			}
-			key = strings.Replace(key, "/", "_", -1)
-			key = strings.Replace(key, "-", "_", -1)
 
 			grouper.Add(name, tags, timestamp, key, v)
 		}
@@ -329,124 +312,60 @@ func (c *CiscoTelemetryGNMI) handleSubscribeResponse(address string, reply *gnmi
 }
 
 // HandleTelemetryField and add it to a measurement
-func (c *CiscoTelemetryGNMI) handleTelemetryField(telemetryMetric TelemetryMetric, update *gnmi.Update) string {
-	if telemetryMetric.Tags == nil {
-		telemetryMetric.Tags = map[string]string{}
-	}
-	path, aliasPath := c.handlePath(update.Path, telemetryMetric.Tags)
+func (c *CiscoTelemetryGNMI) handleTelemetryField(update *gnmi.Update, tags map[string]string, prefix string) (string, map[string]interface{}) {
+	path, aliasPath := c.handlePath(update.Path, tags, prefix)
+
+	var value interface{}
+	var jsondata []byte
 
 	// Make sure a value is actually set
 	if update.Val == nil || update.Val.Value == nil {
 		c.Log.Infof("Discarded empty or legacy type value with path: %q", path)
-		return aliasPath
+		return aliasPath, nil
 	}
 
 	switch val := update.Val.Value.(type) {
 	case *gnmi.TypedValue_AsciiVal:
-		telemetryMetric.Value = val.AsciiVal
+		value = val.AsciiVal
 	case *gnmi.TypedValue_BoolVal:
-		telemetryMetric.Value = val.BoolVal
+		value = val.BoolVal
 	case *gnmi.TypedValue_BytesVal:
-		telemetryMetric.Value = val.BytesVal
+		value = val.BytesVal
 	case *gnmi.TypedValue_DecimalVal:
-		telemetryMetric.Value = val.DecimalVal
+		value = val.DecimalVal
 	case *gnmi.TypedValue_FloatVal:
-		telemetryMetric.Value = val.FloatVal
+		value = val.FloatVal
 	case *gnmi.TypedValue_IntVal:
-		telemetryMetric.Value = val.IntVal
+		value = val.IntVal
 	case *gnmi.TypedValue_StringVal:
-		telemetryMetric.Value = val.StringVal
+		value = val.StringVal
 	case *gnmi.TypedValue_UintVal:
-		telemetryMetric.Value = val.UintVal
+		value = val.UintVal
 	case *gnmi.TypedValue_JsonIetfVal:
-		c.handleJSONValue(telemetryMetric, val.JsonIetfVal, true, c.KeepNonMetric)
+		jsondata = val.JsonIetfVal
 	case *gnmi.TypedValue_JsonVal:
-		c.handleJSONValue(telemetryMetric, val.JsonVal, false, c.KeepNonMetric)
+		jsondata = val.JsonVal
 	}
-	return aliasPath
-}
 
-func (c *CiscoTelemetryGNMI) handleJSONValue(telemetryMetric TelemetryMetric, value interface{}, deriveNumber bool, keepNonMetric bool) (string, error) {
-	// Derived from parsers/json/FullFlattenJSON
-	switch t := value.(type) {
-	case map[string]interface{}:
-		if telemetryMetric.Nested == nil {
-			telemetryMetric.Nested = make([]TelemetryMetric, len(t))
+	name := strings.Replace(path, "-", "_", -1)
+	fields := make(map[string]interface{})
+	if value != nil {
+		fields[name] = value
+	} else if jsondata != nil {
+		if err := json.Unmarshal(jsondata, &value); err != nil {
+			c.acc.AddError(fmt.Errorf("failed to parse JSON value: %v", err))
+		} else {
+			flattener := jsonparser.JSONFlattener{Fields: fields}
+			flattener.FullFlattenJSON(name, value, true, true)
 		}
-		for k, v := range t {
-			var currTelemetryMetric TelemetryMetric
-			currTelemetryMetric.Name = k
-			tagValue, err := c.handleJSONValue(currTelemetryMetric, v, deriveNumber, keepNonMetric)
-			if err != nil {
-				return "", err
-			}
-			if tagValue != "" {
-				if telemetryMetric.Tags == nil {
-					telemetryMetric.Tags = map[string]string{}
-				}
-				telemetryMetric.Tags[k] = tagValue
-			}
-			if currTelemetryMetric.Value != nil || currTelemetryMetric.Nested != nil {
-				telemetryMetric.Nested = append(telemetryMetric.Nested, currTelemetryMetric)
-			}
-		}
-		return "", nil
-	case []interface{}:
-		if telemetryMetric.Nested == nil {
-			telemetryMetric.Nested = make([]TelemetryMetric, len(t))
-		}
-		for _, v := range t {
-			var currTelemetryMetric TelemetryMetric
-			_, err := c.handleJSONValue(currTelemetryMetric, v, deriveNumber, keepNonMetric)
-			if err != nil {
-				return "", nil
-			}
-			telemetryMetric.Nested = append(telemetryMetric.Nested, currTelemetryMetric)
-		}
-		return "", nil
-	case float64:
-		telemetryMetric.Value = t
-		return "", nil
-	case string:
-		var numberValue interface{}
-		if deriveNumber {
-			if valueAsInt, err := strconv.ParseInt(t, 10, 64); err == nil {
-				numberValue = valueAsInt
-			} else if valueAsFloat, err := strconv.ParseFloat(t, 64); err == nil {
-				numberValue = valueAsFloat
-			}
-			if numberValue != nil {
-				telemetryMetric.Value = numberValue
-			}
-		}
-		if numberValue == nil && keepNonMetric {
-			telemetryMetric.Value = t
-		}
-		if c.tagKeys[telemetryMetric.Name] {
-			return t, nil
-		}
-		return "", nil
-	case bool:
-		if keepNonMetric {
-			telemetryMetric.Value = t
-		}
-		if c.tagKeys[telemetryMetric.Name] {
-			return strconv.FormatBool(t), nil
-		}
-		return "", nil
-	case nil:
-		return "", nil
-	default:
-		return "", fmt.Errorf("gNMI JSON Flattener: got unexpected type %T with value %v (%s)",
-			t, t, telemetryMetric.Name)
 	}
-	return "", nil
+	return aliasPath, fields
 }
 
 // Parse path to path-buffer and tag-field
 func (c *CiscoTelemetryGNMI) handlePath(path *gnmi.Path, tags map[string]string, prefix string) (string, string) {
 	var aliasPath string
-	builder := bytes.NewBuffer(prefix)
+	builder := bytes.NewBufferString(prefix)
 
 	// Prefix with origin
 	if len(path.Origin) > 0 {

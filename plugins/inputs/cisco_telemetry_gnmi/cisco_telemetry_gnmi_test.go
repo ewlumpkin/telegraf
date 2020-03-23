@@ -37,6 +37,16 @@ func TestParsePath(t *testing.T) {
 	parsed, err = parsePath("", "/foo[[", "")
 	assert.Nil(t, parsed)
 	assert.Equal(t, errors.New("Invalid GNMI path: /foo[[/"), err)
+
+	parsed, err = parsePath("DME", "/sys/intf/phys-[eth1/1]", "")
+	assert.Nil(t, err)
+	assert.Equal(t, parsed.Origin, "DME")
+	assert.Equal(t, parsed.Elem, []*gnmi.PathElem{{Name: "sys"}, {Name: "intf"}, {Name: "phys-[eth1/1]"}})
+
+	parsed, err = parsePath("DME", "/sys/intf/?query-condition[query-target=subtree&target-subtree-class=rmonDot3Stats]", "")
+	assert.Nil(t, err)
+	assert.Equal(t, parsed.Origin, "DME")
+	assert.Equal(t, parsed.Elem, []*gnmi.PathElem{{Name: "sys"}, {Name: "intf"}, {Name: "?query-condition", Key: map[string]string{"query-target": "subtree&target-subtree-class=rmonDot3Stats"}}})
 }
 
 type MockServer struct {

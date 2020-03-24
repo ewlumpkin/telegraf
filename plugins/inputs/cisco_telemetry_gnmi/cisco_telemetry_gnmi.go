@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
 	internaltls "github.com/influxdata/telegraf/internal/tls"
@@ -137,6 +138,7 @@ func (c *CiscoTelemetryGNMI) Start(acc telegraf.Accumulator) error {
 		go func(address string) {
 			defer c.wg.Done()
 			for ctx.Err() == nil {
+				c.Log.Debugf("SubscribeRequest textual proto:\n%s", proto.MarshalTextString(request))
 				if err := c.subscribeGNMI(ctx, address, tlscfg, request); err != nil && ctx.Err() == nil {
 					acc.AddError(err)
 				}

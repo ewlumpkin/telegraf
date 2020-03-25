@@ -20,9 +20,7 @@ import (
 )
 
 func TestParsePath(t *testing.T) {
-	path := "/foo/bar/bla[shoo=woo][shoop=/woop/]/z"
-	parsed, err := parsePath("theorigin", path, "thetarget")
-
+	parsed, err := parsePath("theorigin", "/foo/bar/bla[shoo=woo][shoop=/woop/]/z", "thetarget")
 	assert.Nil(t, err)
 	assert.Equal(t, parsed.Origin, "theorigin")
 	assert.Equal(t, parsed.Target, "thetarget")
@@ -43,10 +41,32 @@ func TestParsePath(t *testing.T) {
 	assert.Equal(t, parsed.Origin, "DME")
 	assert.Equal(t, parsed.Elem, []*gnmi.PathElem{{Name: "sys"}, {Name: "intf"}, {Name: "phys-[eth1/1]"}})
 
-	parsed, err = parsePath("DME", "/sys/intf/?query-condition[query-target=subtree&target-subtree-class=rmonDot3Stats]", "")
+	parsed, err = parsePath("DME", "/sys/intf/?query-condition[query-target=subtree&target-subtree-class=rmonIfIn,rmonIfOut]", "")
 	assert.Nil(t, err)
 	assert.Equal(t, parsed.Origin, "DME")
-	assert.Equal(t, parsed.Elem, []*gnmi.PathElem{{Name: "sys"}, {Name: "intf"}, {Name: "?query-condition", Key: map[string]string{"query-target": "subtree&target-subtree-class=rmonDot3Stats"}}})
+	assert.Equal(t, parsed.Elem, []*gnmi.PathElem{{Name: "sys"}, {Name: "intf"}, {Name: "?query-condition", Key: map[string]string{"query-target": "subtree&target-subtree-class=rmonIfIn,rmonIfOut"}}})
+}
+
+func TestPathToMetricAttrs(t *testing.T) {
+	parsed, err := parsePath("theorigin", "/foo/bar/bla[shoo=woo][shoop=/woop/]/z", "thetarget")
+	assert.Nil(t, err)
+	tags := map[string]string{}
+	expectedTags := map[string]string{}
+	expectedTags["shoo"] = "woo"
+	expectedTags["shoop"] = "/woop/"
+	longPath, shortPath, aliasPath := pathToMetricAttrs(parsed, tags, nil, "")
+	assert.Equal(t, "theorigin:/foo/bar/bla/z", longPath)
+	assert.Equal(t, "/foo/bar/bla/z", shortPath)
+	assert.Equal(t, expectedTags, tags)
+	assert.Equal(t, "", aliasPath)
+	longPath, shortPath, aliasPath = pathToMetricAttrs(parsed, tags, nil, "theprefix")
+	assert.Equal(t, "theprefixtheorigin:/foo/bar/bla/z", longPath)
+	assert.Equal(t, "theprefix/foo/bar/bla/z", shortPath)
+	assert.Equal(t, "", aliasPath)
+	aliases := map[string]string{}
+	aliases["theprefixtheorigin:/foo/bar"] = "aliased"
+	longPath, shortPath, aliasPath = pathToMetricAttrs(parsed, tags, aliases, "theprefix")
+	assert.Equal(t, "theprefixtheorigin:/foo/bar", aliasPath)
 }
 
 type MockServer struct {

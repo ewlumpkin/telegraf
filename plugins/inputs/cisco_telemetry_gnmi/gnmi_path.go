@@ -1,6 +1,7 @@
 package cisco_telemetry_gnmi
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -8,6 +9,51 @@ import (
 )
 
 type gNMIPath gnmi.Path
+
+// Parse path to path-buffer and tag-field
+func pathToMetricAttrs(path *gnmi.Path, tags map[string]string, aliases map[string]string, prefix string) (string, string, string) {
+	var aliasPath string
+	builder := bytes.NewBufferString(prefix)
+
+	// Prefix with origin
+	if len(path.Origin) > 0 {
+		builder.WriteString(path.Origin)
+		builder.WriteRune(':')
+	}
+
+	// Parse generic keys from prefix
+	for _, elem := range path.Elem {
+		if len(elem.Name) > 0 {
+			builder.WriteRune('/')
+			builder.WriteString(elem.Name)
+		}
+		name := builder.String()
+
+		if _, exists := aliases[name]; exists {
+			aliasPath = name
+		}
+
+		if tags != nil {
+			for key, val := range elem.Key {
+				key = strings.Replace(key, "-", "_", -1)
+
+				// Use short-form of key if possible
+				if _, exists := tags[key]; exists {
+					tags[name+"/"+key] = val
+				} else {
+					tags[key] = val
+				}
+
+			}
+		}
+	}
+	pathString := builder.String()
+	var noOriginPathString string
+	if len(path.Origin) > 0 {
+		noOriginPathString = prefix + pathString[len(prefix)+len(path.Origin)+1:]
+	}
+	return pathString, noOriginPathString, aliasPath
+}
 
 func parsePath(origin string, path string, target string) (*gnmi.Path, error) {
 	var err error

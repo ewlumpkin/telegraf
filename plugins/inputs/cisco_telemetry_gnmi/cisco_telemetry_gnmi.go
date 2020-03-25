@@ -1,7 +1,6 @@
 package cisco_telemetry_gnmi
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -105,18 +104,14 @@ func (c *CiscoTelemetryGNMI) Start(acc telegraf.Accumulator) error {
 	// Invert explicit alias list and prefill subscription names
 	c.aliases = make(map[string]string, len(c.Subscriptions)+len(c.Aliases))
 	for _, subscription := range c.Subscriptions {
-		var gnmiLongPath, gnmiShortPath *gnmi.Path
+		var gnmiPath *gnmi.Path
 
 		// Build the subscription path without keys
-		if gnmiLongPath, err = parsePath(subscription.Origin, subscription.Path, ""); err != nil {
-			return err
-		}
-		if gnmiShortPath, err = parsePath("", subscription.Path, ""); err != nil {
+		if gnmiPath, err = parsePath(subscription.Origin, subscription.Path, ""); err != nil {
 			return err
 		}
 
-		longPath, _ := c.handlePath(gnmiLongPath, nil, "")
-		shortPath, _ := c.handlePath(gnmiShortPath, nil, "")
+		longPath, shortPath, _ := pathToMetricAttrs(gnmiPath, nil, c.aliases, "")
 		name := subscription.Name
 
 		// If the user didn't provide a measurement name, use last path element
@@ -159,6 +154,7 @@ func (c *CiscoTelemetryGNMI) newSubscribeRequest() (*gnmi.SubscribeRequest, erro
 	subscriptions := make([]*gnmi.Subscription, len(c.Subscriptions))
 	for i, subscription := range c.Subscriptions {
 		gnmiPath, err := parsePath(subscription.Origin, subscription.Path, "")
+		c.Log.Infof("%s | %s")
 		if err != nil {
 			return nil, err
 		}
@@ -252,7 +248,7 @@ func (c *CiscoTelemetryGNMI) handleSubscribeResponse(address string, reply *gnmi
 	prefixTags := make(map[string]string)
 
 	if response.Update.Prefix != nil {
-		prefix, prefixAliasPath = c.handlePath(response.Update.Prefix, prefixTags, "")
+		prefix, _, prefixAliasPath = pathToMetricAttrs(response.Update.Prefix, prefixTags, c.aliases, "")
 	}
 	prefixTags["source"], _, _ = net.SplitHostPort(address)
 	prefixTags["path"] = prefix
@@ -316,7 +312,7 @@ func (c *CiscoTelemetryGNMI) handleSubscribeResponse(address string, reply *gnmi
 
 // HandleTelemetryField and add it to a measurement
 func (c *CiscoTelemetryGNMI) handleTelemetryField(update *gnmi.Update, tags map[string]string, prefix string) (string, map[string]interface{}) {
-	path, aliasPath := c.handlePath(update.Path, tags, prefix)
+	path, _, aliasPath := pathToMetricAttrs(update.Path, tags, c.aliases, prefix)
 
 	var value interface{}
 	var jsondata []byte
@@ -363,47 +359,6 @@ func (c *CiscoTelemetryGNMI) handleTelemetryField(update *gnmi.Update, tags map[
 		}
 	}
 	return aliasPath, fields
-}
-
-// Parse path to path-buffer and tag-field
-func (c *CiscoTelemetryGNMI) handlePath(path *gnmi.Path, tags map[string]string, prefix string) (string, string) {
-	var aliasPath string
-	builder := bytes.NewBufferString(prefix)
-
-	// Prefix with origin
-	if len(path.Origin) > 0 {
-		builder.WriteString(path.Origin)
-		builder.WriteRune(':')
-	}
-
-	// Parse generic keys from prefix
-	for _, elem := range path.Elem {
-		if len(elem.Name) > 0 {
-			builder.WriteRune('/')
-			builder.WriteString(elem.Name)
-		}
-		name := builder.String()
-
-		if _, exists := c.aliases[name]; exists {
-			aliasPath = name
-		}
-
-		if tags != nil {
-			for key, val := range elem.Key {
-				key = strings.Replace(key, "-", "_", -1)
-
-				// Use short-form of key if possible
-				if _, exists := tags[key]; exists {
-					tags[name+"/"+key] = val
-				} else {
-					tags[key] = val
-				}
-
-			}
-		}
-	}
-
-	return builder.String(), aliasPath
 }
 
 // Stop listener and cleanup

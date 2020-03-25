@@ -10,7 +10,11 @@ import (
 
 type gNMIPath gnmi.Path
 
-// Parse path to path-buffer and tag-field
+// Convert a Path to the concatenated representation and derive tags/alias.
+// Traverses Path elems and condenses to / separated string.
+// Returns both origin-prefixed and no origin string to account for potential..bug if origin not reported.
+// Adds elem keys/values to the provided tags map, mutates in function.
+// Checks for aliasing via the passed aliases map, not mutated.
 func pathToMetricAttrs(path *gnmi.Path, tags map[string]string, aliases map[string]string, prefix string) (string, string, string) {
 	var aliasPath string
 	builder := bytes.NewBufferString(prefix)
@@ -55,6 +59,8 @@ func pathToMetricAttrs(path *gnmi.Path, tags map[string]string, aliases map[stri
 	return pathString, noOriginPathString, aliasPath
 }
 
+// Parses a provided origin, path, and target into gnmi.Path.
+// This function should be used by external code for easy gnmi.Path generation.
 func parsePath(origin string, path string, target string) (*gnmi.Path, error) {
 	var err error
 	gnmiPath := gNMIPath{Origin: origin, Target: target}
@@ -66,6 +72,9 @@ func parsePath(origin string, path string, target string) (*gnmi.Path, error) {
 	return &baseGNMIPath, err
 }
 
+// Generic entrypoint to attempt to derive parsing as needed.
+// Accepts the path/origin string and parses them into structure.
+// Currently assumes parsing is based upon origin.
 func (p *gNMIPath) parsePath(path string, origin string) error {
 	var err error
 	switch origin {
@@ -77,6 +86,7 @@ func (p *gNMIPath) parsePath(path string, origin string) error {
 	return err
 }
 
+// Parses a Path from a YANG XPath.
 func (p *gNMIPath) parseXPathElems(path string) error {
 	var err error
 	if len(path) > 0 && path[0] != '/' {

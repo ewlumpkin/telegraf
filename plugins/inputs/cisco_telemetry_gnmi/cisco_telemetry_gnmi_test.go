@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+// Test XPath/DME Path parsing.
 func TestParsePath(t *testing.T) {
 	parsed, err := parsePath("theorigin", "/foo/bar/bla[shoo=woo][shoop=/woop/]/z", "thetarget")
 	assert.Nil(t, err)
@@ -65,8 +66,11 @@ func TestPathToMetricAttrs(t *testing.T) {
 	assert.Equal(t, "", aliasPath)
 	aliases := map[string]string{}
 	aliases["theprefixtheorigin:/foo/bar"] = "aliased"
+	aliases["theorigin:/foo/bar"] = "alsoaliased"
 	longPath, shortPath, aliasPath = pathToMetricAttrs(parsed, tags, aliases, "theprefix")
 	assert.Equal(t, "theprefixtheorigin:/foo/bar", aliasPath)
+	longPath, shortPath, aliasPath = pathToMetricAttrs(parsed, tags, aliases, "")
+	assert.Equal(t, "theorigin:/foo/bar", aliasPath)
 }
 
 type MockServer struct {

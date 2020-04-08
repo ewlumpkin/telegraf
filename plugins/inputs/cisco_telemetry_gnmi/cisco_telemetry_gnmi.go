@@ -154,7 +154,6 @@ func (c *CiscoTelemetryGNMI) newSubscribeRequest() (*gnmi.SubscribeRequest, erro
 	subscriptions := make([]*gnmi.Subscription, len(c.Subscriptions))
 	for i, subscription := range c.Subscriptions {
 		gnmiPath, err := parsePath(subscription.Origin, subscription.Path, "")
-		c.Log.Infof("%s | %s")
 		if err != nil {
 			return nil, err
 		}
@@ -261,7 +260,11 @@ func (c *CiscoTelemetryGNMI) handleSubscribeResponse(address string, reply *gnmi
 		for key, val := range prefixTags {
 			tags[key] = val
 		}
-		aliasPath, fields := c.handleTelemetryField(update, tags, prefix)
+		// Derive the update's path string, any alias path, and individual fields.
+		updatePath, aliasPath, fields := c.handleTelemetryField(update, tags, prefix)
+		if tags["path"] == "" {
+			tags["path"] = updatePath
+		}
 
 		// Inherent valid alias from prefix parsing
 		if len(prefixAliasPath) > 0 && len(aliasPath) == 0 {
@@ -270,11 +273,16 @@ func (c *CiscoTelemetryGNMI) handleSubscribeResponse(address string, reply *gnmi
 
 		// Lookup alias if alias-path has changed
 		if aliasPath != lastAliasPath {
-			name = prefix
+			// Use prefix or derived update path for aliasing
+			if prefix != "" {
+				name = prefix
+			} else {
+				name = updatePath
+			}
 			if alias, ok := c.aliases[aliasPath]; ok {
 				name = alias
 			} else {
-				c.Log.Debugf("No measurement alias for GNMI path: %s", name)
+				c.Log.Debugf("No measurement alias for gNMI path: %s", name)
 			}
 		}
 
@@ -284,7 +292,7 @@ func (c *CiscoTelemetryGNMI) handleSubscribeResponse(address string, reply *gnmi
 			if len(aliasPath) < len(key) {
 				// This may not be an exact prefix, due to naming style
 				// conversion on the key.
-				key = key[len(aliasPath)+1:]
+				key = key[len(aliasPath):]
 			} else {
 				// Otherwise use the last path element as the field key.
 				key = path.Base(key)
@@ -311,7 +319,7 @@ func (c *CiscoTelemetryGNMI) handleSubscribeResponse(address string, reply *gnmi
 }
 
 // HandleTelemetryField and add it to a measurement
-func (c *CiscoTelemetryGNMI) handleTelemetryField(update *gnmi.Update, tags map[string]string, prefix string) (string, map[string]interface{}) {
+func (c *CiscoTelemetryGNMI) handleTelemetryField(update *gnmi.Update, tags map[string]string, prefix string) (string, string, map[string]interface{}) {
 	path, _, aliasPath := pathToMetricAttrs(update.Path, tags, c.aliases, prefix)
 
 	var value interface{}
@@ -320,7 +328,7 @@ func (c *CiscoTelemetryGNMI) handleTelemetryField(update *gnmi.Update, tags map[
 	// Make sure a value is actually set
 	if update.Val == nil || update.Val.Value == nil {
 		c.Log.Infof("Discarded empty or legacy type value with path: %q", path)
-		return aliasPath, nil
+		return path, aliasPath, nil
 	}
 
 	switch val := update.Val.Value.(type) {
@@ -358,7 +366,7 @@ func (c *CiscoTelemetryGNMI) handleTelemetryField(update *gnmi.Update, tags map[
 			flattener.FullFlattenJSON(name, value, true, true)
 		}
 	}
-	return aliasPath, fields
+	return path, aliasPath, fields
 }
 
 // Stop listener and cleanup

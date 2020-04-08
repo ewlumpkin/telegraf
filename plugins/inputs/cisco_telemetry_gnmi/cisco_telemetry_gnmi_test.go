@@ -49,17 +49,20 @@ func TestParsePath(t *testing.T) {
 }
 
 func TestPathToMetricAttrs(t *testing.T) {
+	// Baseline XPath
 	parsed, err := parsePath("theorigin", "/foo/bar/bla[shoo=woo][shoop=/woop/]/z", "thetarget")
 	assert.Nil(t, err)
 	tags := map[string]string{}
 	expectedTags := map[string]string{}
 	expectedTags["shoo"] = "woo"
 	expectedTags["shoop"] = "/woop/"
+	// No prefix
 	longPath, shortPath, aliasPath := pathToMetricAttrs(parsed, tags, nil, "")
 	assert.Equal(t, "theorigin:/foo/bar/bla/z", longPath)
 	assert.Equal(t, "/foo/bar/bla/z", shortPath)
 	assert.Equal(t, expectedTags, tags)
 	assert.Equal(t, "", aliasPath)
+	// With prefix
 	longPath, shortPath, aliasPath = pathToMetricAttrs(parsed, tags, nil, "theprefix")
 	assert.Equal(t, "theprefixtheorigin:/foo/bar/bla/z", longPath)
 	assert.Equal(t, "theprefix/foo/bar/bla/z", shortPath)
@@ -67,10 +70,16 @@ func TestPathToMetricAttrs(t *testing.T) {
 	aliases := map[string]string{}
 	aliases["theprefixtheorigin:/foo/bar"] = "aliased"
 	aliases["theorigin:/foo/bar"] = "alsoaliased"
+	// Test alias parsing
 	longPath, shortPath, aliasPath = pathToMetricAttrs(parsed, tags, aliases, "theprefix")
 	assert.Equal(t, "theprefixtheorigin:/foo/bar", aliasPath)
 	longPath, shortPath, aliasPath = pathToMetricAttrs(parsed, tags, aliases, "")
 	assert.Equal(t, "theorigin:/foo/bar", aliasPath)
+	// Test aliasing without prefixes
+	parsed, err = parsePath("", "/foo/bar/bla[shoo=woo][shoop=/woop/]/z", "thetarget")
+	aliases["/foo/bar"] = "shortalias"
+	longPath, shortPath, aliasPath = pathToMetricAttrs(parsed, tags, aliases, "")
+	assert.Equal(t, "/foo/bar", aliasPath)
 }
 
 type MockServer struct {
@@ -235,6 +244,26 @@ func mockGNMINotification() *gnmi.Notification {
 					},
 				},
 				Val: &gnmi.TypedValue{Value: &gnmi.TypedValue_StringVal{StringVal: "that"}},
+			},
+		},
+	}
+}
+
+func mockGNMINotificationNX() *gnmi.Notification {
+	return &gnmi.Notification{
+		Timestamp: 1543236572000000000,
+		Update: []*gnmi.Update{
+			{
+				Path: &gnmi.Path{
+					Origin: "DME",
+					Elem: []*gnmi.PathElem{
+						{Name: "sys"},
+						{Name: "intf"},
+						{Key: map[string]string{"phys": "eth1/4"}},
+						{Name: "dbgEtherStats"},
+					},
+				},
+				Val: &gnmi.TypedValue{Value: &gnmi.TypedValue_JsonVal{JsonVal: "{ \"broadcastPkts"}},
 			},
 		},
 	}

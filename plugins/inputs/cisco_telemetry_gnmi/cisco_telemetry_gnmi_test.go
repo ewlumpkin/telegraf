@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -99,6 +101,24 @@ func TestWaitError(t *testing.T) {
 
 	require.Contains(t, acc.Errors,
 		errors.New("aborted GNMI subscription: rpc error: code = Unknown desc = testerror"))
+}
+
+// Tests the behavior of ParseStringToNumber and defaulting to Uint64 as data type.
+func TestParseStringToNumber(t *testing.T) {
+	assert.Equal(t, uint64(math.MaxUint64), parseStringNumber(strconv.FormatUint(math.MaxUint64, 10)))
+	assert.Equal(t, uint64(math.MaxUint32), parseStringNumber(strconv.FormatUint(math.MaxUint32, 10)))
+	assert.Equal(t, uint64(math.MaxInt64), parseStringNumber(strconv.FormatInt(math.MaxInt64, 10)))
+	assert.Equal(t, uint64(math.MaxInt32), parseStringNumber(strconv.FormatInt(math.MaxInt32, 10)))
+	assert.Equal(t, int64(math.MinInt64), parseStringNumber(strconv.FormatInt(math.MinInt64, 10)))
+	assert.Equal(t, int64(math.MinInt32), parseStringNumber(strconv.FormatInt(math.MinInt32, 10)))
+	assert.Equal(t, float64(math.MaxFloat64), parseStringNumber(strconv.FormatFloat(math.MaxFloat64, 'E', -1, 64)))
+	assert.Equal(t, float64(math.MaxFloat32), parseStringNumber(strconv.FormatFloat(math.MaxFloat32, 'E', -1, 64)))
+	// Uncertain if this is really valid, but negative max?
+	assert.Equal(t, float64(math.MaxFloat64*-1), parseStringNumber(strconv.FormatFloat(math.MaxFloat64*-1, 'E', -1, 64)))
+	assert.Equal(t, float64(math.MaxFloat32*-1), parseStringNumber(strconv.FormatFloat(math.MaxFloat32*-1, 'E', -1, 64)))
+	assert.Equal(t, float64(1234.567), parseStringNumber("1234.567"))
+	assert.Equal(t, float64(-1234.567), parseStringNumber("-1234.567"))
+	assert.Equal(t, "hello1234!", parseStringNumber("hello1234!"))
 }
 
 func TestUsernamePassword(t *testing.T) {
@@ -279,6 +299,205 @@ func TestNotification(t *testing.T) {
 					},
 					map[string]interface{}{
 						"some/path": "123",
+					},
+					time.Unix(0, 0),
+				),
+				testutil.MustMetric(
+					"alias",
+					map[string]string{
+						"path":   "type:/model",
+						"source": "127.0.0.1",
+						"foo":    "bar2",
+					},
+					map[string]interface{}{
+						"other/path": "foobar",
+						"other/this": "that",
+					},
+					time.Unix(0, 0),
+				),
+			},
+		},
+		{
+			name: "full path field key",
+			plugin: &CiscoTelemetryGNMI{
+				Log:      testutil.Logger{},
+				Encoding: "proto",
+				Redial:   internal.Duration{Duration: 1 * time.Second},
+				Subscriptions: []Subscription{
+					{
+						Name:             "PHY_COUNTERS",
+						Origin:           "type",
+						Path:             "/state/port[port-id=*]/ethernet/oper-speed",
+						SubscriptionMode: "sample",
+					},
+				},
+			},
+			server: &MockServer{
+				SubscribeF: func(server gnmi.GNMI_SubscribeServer) error {
+					response := &gnmi.SubscribeResponse{
+						Response: &gnmi.SubscribeResponse_Update{
+							Update: &gnmi.Notification{
+								Timestamp: 1543236572000000000,
+								Prefix: &gnmi.Path{
+									Origin: "type",
+									Elem: []*gnmi.PathElem{
+										{
+											Name: "state",
+										},
+										{
+											Name: "port",
+											Key:  map[string]string{"port-id": "1"},
+										},
+										{
+											Name: "ethernet",
+										},
+										{
+											Name: "oper-speed",
+										},
+									},
+									Target: "subscription",
+								},
+								Update: []*gnmi.Update{
+									{
+										Path: &gnmi.Path{},
+										Val: &gnmi.TypedValue{
+											Value: &gnmi.TypedValue_IntVal{IntVal: 42},
+										},
+									},
+								},
+							},
+						},
+					}
+					server.Send(response)
+					return nil
+				},
+			},
+			expected: []telegraf.Metric{
+				testutil.MustMetric(
+					"PHY_COUNTERS",
+					map[string]string{
+						"path":    "type:/state/port/ethernet/oper-speed",
+						"source":  "127.0.0.1",
+						"port_id": "1",
+					},
+					map[string]interface{}{
+						"oper_speed": 42,
+					},
+					time.Unix(0, 0),
+				),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+
+			tt.plugin.Addresses = []string{listener.Addr().String()}
+
+			grpcServer := grpc.NewServer()
+			tt.server.GRPCServer = grpcServer
+			gnmi.RegisterGNMIServer(grpcServer, tt.server)
+
+			var acc testutil.Accumulator
+			err = tt.plugin.Start(&acc)
+			require.NoError(t, err)
+
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err := grpcServer.Serve(listener)
+				require.NoError(t, err)
+			}()
+
+			acc.Wait(len(tt.expected))
+			tt.plugin.Stop()
+			grpcServer.Stop()
+			wg.Wait()
+
+			testutil.RequireMetricsEqual(t, tt.expected, acc.GetTelegrafMetrics(),
+				testutil.IgnoreTime())
+		})
+	}
+}
+
+// Just a copy of TestNotification with parsing strings to numbers in metrics.
+func TestNotificationStringToNumber(t *testing.T) {
+	tests := []struct {
+		name     string
+		plugin   *CiscoTelemetryGNMI
+		server   *MockServer
+		expected []telegraf.Metric
+	}{
+		{
+			name: "multiple metrics",
+			plugin: &CiscoTelemetryGNMI{
+				Log:               testutil.Logger{},
+				Encoding:          "proto",
+				Redial:            internal.Duration{Duration: 1 * time.Second},
+				ParseStringNumber: true,
+				Subscriptions: []Subscription{
+					{
+						Name:             "alias",
+						Origin:           "type",
+						Path:             "/model",
+						SubscriptionMode: "sample",
+					},
+				},
+			},
+			server: &MockServer{
+				SubscribeF: func(server gnmi.GNMI_SubscribeServer) error {
+					notification := mockGNMINotification()
+					server.Send(&gnmi.SubscribeResponse{Response: &gnmi.SubscribeResponse_Update{Update: notification}})
+					server.Send(&gnmi.SubscribeResponse{Response: &gnmi.SubscribeResponse_SyncResponse{SyncResponse: true}})
+					notification.Prefix.Elem[0].Key["foo"] = "bar2"
+					notification.Update[0].Path.Elem[1].Key["name"] = "str2"
+					notification.Update[0].Val = &gnmi.TypedValue{Value: &gnmi.TypedValue_StringVal{StringVal: "123"}}
+					server.Send(&gnmi.SubscribeResponse{Response: &gnmi.SubscribeResponse_Update{Update: notification}})
+					return nil
+				},
+			},
+			expected: []telegraf.Metric{
+				testutil.MustMetric(
+					"alias",
+					map[string]string{
+						"path":   "type:/model",
+						"source": "127.0.0.1",
+						"foo":    "bar",
+						"name":   "str",
+						"uint64": "1234",
+					},
+					map[string]interface{}{
+						"some/path": int64(5678),
+					},
+					time.Unix(0, 0),
+				),
+				testutil.MustMetric(
+					"alias",
+					map[string]string{
+						"path":   "type:/model",
+						"source": "127.0.0.1",
+						"foo":    "bar",
+					},
+					map[string]interface{}{
+						"other/path": "foobar",
+						"other/this": "that",
+					},
+					time.Unix(0, 0),
+				),
+				testutil.MustMetric(
+					"alias",
+					map[string]string{
+						"path":   "type:/model",
+						"foo":    "bar2",
+						"source": "127.0.0.1",
+						"name":   "str2",
+						"uint64": "1234",
+					},
+					map[string]interface{}{
+						"some/path": uint64(123),
 					},
 					time.Unix(0, 0),
 				),

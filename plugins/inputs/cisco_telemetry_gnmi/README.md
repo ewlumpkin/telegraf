@@ -31,6 +31,9 @@ It has been optimized to support GNMI telemetry as produced by Cisco IOS XR (64-
   # tls_cert = "/etc/telegraf/cert.pem"
   # tls_key = "/etc/telegraf/key.pem"
 
+  ## attempt to parse strings to numbers (uint64, int64, float64)
+  # parse_string_number = true
+
   ## GNMI subscription prefix (optional, can usually be left empty)
   ## See: https://github.com/openconfig/reference/blob/master/rpc/gnmi/gnmi-specification.md#222-paths
   # origin = ""

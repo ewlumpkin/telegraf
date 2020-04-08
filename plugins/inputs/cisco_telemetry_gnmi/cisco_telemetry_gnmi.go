@@ -10,6 +10,7 @@ import (
 	"math"
 	"net"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,11 +34,12 @@ type CiscoTelemetryGNMI struct {
 	Aliases       map[string]string `toml:"aliases"`
 
 	// Optional subscription configuration
-	Encoding    string
-	Origin      string
-	Prefix      string
-	Target      string
-	UpdatesOnly bool `toml:"updates_only"`
+	Encoding          string
+	Origin            string
+	Prefix            string
+	Target            string
+	UpdatesOnly       bool `toml:"updates_only"`
+	ParseStringNumber bool `toml:"parse_string_number"`
 
 	// Cisco IOS XR credentials
 	Username string
@@ -339,7 +341,11 @@ func (c *CiscoTelemetryGNMI) handleTelemetryField(update *gnmi.Update, tags map[
 	case *gnmi.TypedValue_IntVal:
 		value = val.IntVal
 	case *gnmi.TypedValue_StringVal:
-		value = val.StringVal
+		if c.ParseStringNumber != true {
+			value = val.StringVal
+		} else {
+			value = parseStringNumber(val.StringVal)
+		}
 	case *gnmi.TypedValue_UintVal:
 		value = val.UintVal
 	case *gnmi.TypedValue_JsonIetfVal:
@@ -361,6 +367,40 @@ func (c *CiscoTelemetryGNMI) handleTelemetryField(update *gnmi.Update, tags map[
 		}
 	}
 	return aliasPath, fields
+}
+
+// Attempt to derive 64-bit integer or float from string, else return the string.
+// The behavior here is to parse unsigned integers by default.
+// There are generally more unsigned integers in use than signed integers for telemetry.
+// Uncertain what the best methodology is otherwise - signed or unsigned by default?
+// Baking in the datatypes from the YANG schema would be more ideal, but heavy.
+func parseStringNumber(value string) interface{} {
+	var numberValue interface{}
+	// Might be a way to make this cleaner - ideally it's just a couple if/elses.
+	// Some of the error assertion nuance & if/else syntax isn't obvious beyond the following.
+	valueAsUint, err := strconv.ParseUint(value, 10, 64)
+	if err == nil {
+		numberValue = valueAsUint
+	} else {
+		// Extract err as NumError struct.
+		if e, ok := err.(*strconv.NumError); ok {
+			// ErrSyntax might indicate non-Uint, no explicit signage error.
+			if e.Err == strconv.ErrSyntax {
+				if valueAsInt, err := strconv.ParseInt(value, 10, 64); err == nil {
+					numberValue = valueAsInt
+				}
+			}
+		}
+	}
+	if numberValue == nil {
+		if valueAsFloat, err := strconv.ParseFloat(value, 64); err == nil {
+			numberValue = valueAsFloat
+		}
+	}
+	if numberValue != nil {
+		return numberValue
+	}
+	return value
 }
 
 // Parse path to path-buffer and tag-field

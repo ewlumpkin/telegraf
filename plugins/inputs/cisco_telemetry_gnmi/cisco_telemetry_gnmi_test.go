@@ -105,20 +105,35 @@ func TestWaitError(t *testing.T) {
 
 // Tests the behavior of ParseStringToNumber and defaulting to Uint64 as data type.
 func TestParseStringToNumber(t *testing.T) {
-	assert.Equal(t, uint64(math.MaxUint64), parseStringNumber(strconv.FormatUint(math.MaxUint64, 10)))
-	assert.Equal(t, uint64(math.MaxUint32), parseStringNumber(strconv.FormatUint(math.MaxUint32, 10)))
-	assert.Equal(t, uint64(math.MaxInt64), parseStringNumber(strconv.FormatInt(math.MaxInt64, 10)))
-	assert.Equal(t, uint64(math.MaxInt32), parseStringNumber(strconv.FormatInt(math.MaxInt32, 10)))
-	assert.Equal(t, int64(math.MinInt64), parseStringNumber(strconv.FormatInt(math.MinInt64, 10)))
-	assert.Equal(t, int64(math.MinInt32), parseStringNumber(strconv.FormatInt(math.MinInt32, 10)))
-	assert.Equal(t, float64(math.MaxFloat64), parseStringNumber(strconv.FormatFloat(math.MaxFloat64, 'E', -1, 64)))
-	assert.Equal(t, float64(math.MaxFloat32), parseStringNumber(strconv.FormatFloat(math.MaxFloat32, 'E', -1, 64)))
+	assert.Equal(t, uint64(math.MaxUint64), parseStringNumber(strconv.FormatUint(math.MaxUint64, 10), false))
+	assert.Equal(t, uint64(math.MaxUint32), parseStringNumber(strconv.FormatUint(math.MaxUint32, 10), false))
+	assert.Equal(t, uint64(math.MaxInt64), parseStringNumber(strconv.FormatInt(math.MaxInt64, 10), false))
+	assert.Equal(t, uint64(math.MaxInt32), parseStringNumber(strconv.FormatInt(math.MaxInt32, 10), false))
+	assert.Equal(t, int64(math.MinInt64), parseStringNumber(strconv.FormatInt(math.MinInt64, 10), false))
+	assert.Equal(t, int64(math.MinInt32), parseStringNumber(strconv.FormatInt(math.MinInt32, 10), false))
+	assert.Equal(t, float64(math.MaxFloat64), parseStringNumber(strconv.FormatFloat(math.MaxFloat64, 'E', -1, 64), false))
+	assert.Equal(t, float64(math.MaxFloat32), parseStringNumber(strconv.FormatFloat(math.MaxFloat32, 'E', -1, 64), false))
 	// Uncertain if this is really valid, but negative max?
-	assert.Equal(t, float64(math.MaxFloat64*-1), parseStringNumber(strconv.FormatFloat(math.MaxFloat64*-1, 'E', -1, 64)))
-	assert.Equal(t, float64(math.MaxFloat32*-1), parseStringNumber(strconv.FormatFloat(math.MaxFloat32*-1, 'E', -1, 64)))
-	assert.Equal(t, float64(1234.567), parseStringNumber("1234.567"))
-	assert.Equal(t, float64(-1234.567), parseStringNumber("-1234.567"))
-	assert.Equal(t, "hello1234!", parseStringNumber("hello1234!"))
+	assert.Equal(t, float64(math.MaxFloat64*-1), parseStringNumber(strconv.FormatFloat(math.MaxFloat64*-1, 'E', -1, 64), false))
+	assert.Equal(t, float64(math.MaxFloat32*-1), parseStringNumber(strconv.FormatFloat(math.MaxFloat32*-1, 'E', -1, 64), false))
+	assert.Equal(t, float64(1234.567), parseStringNumber("1234.567", false))
+	assert.Equal(t, float64(-1234.567), parseStringNumber("-1234.567", false))
+	assert.Equal(t, "hello1234!", parseStringNumber("hello1234!", false))
+	// Now test everything as float
+	assert.Equal(t, float64(math.MaxUint64), parseStringNumber(strconv.FormatUint(math.MaxUint64, 10), true))
+	assert.Equal(t, float64(math.MaxUint32), parseStringNumber(strconv.FormatUint(math.MaxUint32, 10), true))
+	assert.Equal(t, float64(math.MaxInt64), parseStringNumber(strconv.FormatInt(math.MaxInt64, 10), true))
+	assert.Equal(t, float64(math.MaxInt32), parseStringNumber(strconv.FormatInt(math.MaxInt32, 10), true))
+	assert.Equal(t, float64(math.MinInt64), parseStringNumber(strconv.FormatInt(math.MinInt64, 10), true))
+	assert.Equal(t, float64(math.MinInt32), parseStringNumber(strconv.FormatInt(math.MinInt32, 10), true))
+	assert.Equal(t, float64(math.MaxFloat64), parseStringNumber(strconv.FormatFloat(math.MaxFloat64, 'E', -1, 64), true))
+	assert.Equal(t, float64(math.MaxFloat32), parseStringNumber(strconv.FormatFloat(math.MaxFloat32, 'E', -1, 64), true))
+	// Uncertain if this is really valid, but negative max?
+	assert.Equal(t, float64(math.MaxFloat64*-1), parseStringNumber(strconv.FormatFloat(math.MaxFloat64*-1, 'E', -1, 64), true))
+	assert.Equal(t, float64(math.MaxFloat32*-1), parseStringNumber(strconv.FormatFloat(math.MaxFloat32*-1, 'E', -1, 64), true))
+	assert.Equal(t, float64(1234.567), parseStringNumber("1234.567", true))
+	assert.Equal(t, float64(-1234.567), parseStringNumber("-1234.567", true))
+	assert.Equal(t, "hello1234!", parseStringNumber("hello1234!", true))
 }
 
 func TestUsernamePassword(t *testing.T) {

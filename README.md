@@ -16,6 +16,9 @@ metric collection. There are four distinct types of plugins:
 New plugins are designed to be easy to contribute, we'll eagerly accept pull
 requests and will manage the set of plugins that Telegraf supports.
 
+New plugins are designed to be easy to contribute, we'll eagerly accept pull
+requests and will manage the set of plugins that Telegraf supports.
+
 ## Contributing
 
 New plugins are designed to be easy to contribute, pull requests are welcomed, and we work to

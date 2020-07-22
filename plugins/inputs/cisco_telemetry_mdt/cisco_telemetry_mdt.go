@@ -38,6 +38,7 @@ type CiscoTelemetryMDT struct {
 	MaxMsgSize     int               `toml:"max_msg_size"`
 	Aliases        map[string]string `toml:"aliases"`
 	EmbeddedTags   []string          `toml:"embedded_tags"`
+	EmptyDefault   interface{}       `toml:"empty_default"`
 
 	Log telegraf.Logger
 
@@ -402,7 +403,15 @@ func (c *CiscoTelemetryMDT) parseContentField(grouper *metric.SeriesGrouper, fie
 
 	extraTags := c.extraTags[strings.Replace(path, "-", "_", -1)+"/"+name]
 
-	if value := decodeValue(field); value != nil {
+	decodedValue := decodeValue(field)
+	var value interface{}
+	if decodedValue == nil && (field.Fields == nil || len(field.Fields) == 0) && c.EmptyDefault != nil {
+		value = c.EmptyDefault
+	} else {
+		value = decodedValue
+	}
+
+	if value != nil {
 		// Do alias lookup, to shorten measurement names
 		measurement := path
 		if alias, ok := c.aliases[path]; ok {

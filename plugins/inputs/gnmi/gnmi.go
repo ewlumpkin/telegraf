@@ -33,11 +33,12 @@ type GNMI struct {
 	Aliases       map[string]string `toml:"aliases"`
 
 	// Optional subscription configuration
-	Encoding    string
-	Origin      string
-	Prefix      string
-	Target      string
-	UpdatesOnly bool `toml:"updates_only"`
+	Encoding     string
+	Origin       string
+	Prefix       string
+	Target       string
+	UpdatesOnly  bool        `toml:"updates_only"`
+	EmptyDefault interface{} `toml:"empty_default"`
 
 	// gNMI target credentials
 	Username string
@@ -298,6 +299,10 @@ func (c *GNMI) handleSubscribeResponse(address string, reply *gnmi.SubscribeResp
 					c.Log.Errorf("invalid empty path: %q", k)
 					continue
 				}
+			}
+
+			if v == nil && c.EmptyDefault != nil {
+				v = c.EmptyDefault
 			}
 
 			grouper.Add(name, tags, timestamp, key, v)

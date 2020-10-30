@@ -635,10 +635,9 @@ const sampleConfig = `
  #  ifcounters = "openconfig:/interfaces/interface/state/counters"
 
  [[inputs.gnmi.subscription]]
- ## Define (for certain nested telemetry measurements with embedded tags) which additional fields are tags
- #  embedded_tags = ["Cisco-IOS-XR-pfi-im-cmd-oper:/interfaces/interface-summary/interface-type/interface-type-name"]
+  ## Define (for certain nested telemetry measurements with embedded tags) which additional fields are tags
+  #  embedded_tags = ["Cisco-IOS-XR-pfi-im-cmd-oper:/interfaces/interface-summary/interface-type/interface-type-name"]
 
- [[inputs.gnmi.subscription]]
   ## Name of the measurement that will be emitted
   name = "ifcounters"
 
